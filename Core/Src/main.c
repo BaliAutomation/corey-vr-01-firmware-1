@@ -21,11 +21,10 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include <stdio.h>
 #include <stdint.h>
 #include <stdbool.h>
 #include <string.h>
-#include "command_parser.h"
+#include "commands.h"
 
 /* USER CODE END Includes */
 
@@ -36,7 +35,6 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -55,15 +53,24 @@ TIM_HandleTypeDef htim3;
 UART_HandleTypeDef huart1;
 UART_HandleTypeDef huart3;
 DMA_HandleTypeDef hdma_usart1_tx;
+DMA_HandleTypeDef hdma_usart1_rx;
+DMA_HandleTypeDef hdma_usart3_tx;
+DMA_HandleTypeDef hdma_usart3_rx;
 
 /* USER CODE BEGIN PV */
-static bool cmd_received = false;
-static char cmd_buffer[MAX_COMMAND_LENGTH] = {0};
-static char response_buffer[MAX_COMMAND_LENGTH] = {0};
-static char conversion[20];
-static uint64_t hu_counter;
-static uint64_t hv_counter;
-static uint64_t hw_counter;
+
+uint64_t hu_counter;
+uint64_t hv_counter;
+uint64_t hw_counter;
+
+UART_HandleTypeDef *uart = &huart1;
+SPI_HandleTypeDef *spi = &hspi2;
+
+uint8_t dma_buffer[REQUEST_BUFFER_LENGTH];
+char request_buffer[REQUEST_BUFFER_LENGTH];
+char response_buffer[RESPONSE_BUFFER_LENGTH];
+bool request_received = false;
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -82,21 +89,9 @@ static void MX_USART3_UART_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-// TODO: Add some type of checksum or CRC in both directions.
-void respond(char *text) {
-    strncpy(response_buffer, text, sizeof(response_buffer) - 6);
-    response_buffer[sizeof(response_buffer) - 1] = 0;
-    HAL_UART_Transmit_DMA(&huart3, response_buffer, sizeof(response_buffer));
-}
 
-void respond_long(uint64_t value) {
-    snprintf(conversion, sizeof(conversion), "%llu", value);
-    respond(conversion);
-}
 
-void uart_irq() {
-}
-
+// IRQ HU. HV. HW
 void increment(int pin) {
     switch (pin) {
         case HU_IN_Pin:
@@ -108,8 +103,40 @@ void increment(int pin) {
         case HW_IN_Pin:
             hw_counter++;
             break;
+        default:
+            break;
     }
 }
+
+// Serial comms
+static void process_char(char ch) {
+    static int index = 0;
+
+    if (ch == '\r') {
+        request_buffer[index] = '\0';
+        index = 0;
+        request_received = true;
+    } else {
+        request_buffer[index++] = ch;
+    }
+}
+
+void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *usart, uint16_t offset) {
+    static uint16_t last_offset = 0;
+
+    if (offset != last_offset) {
+        if (offset < last_offset) {
+            while (last_offset < sizeof(dma_buffer)) {
+                process_char(dma_buffer[last_offset++]);
+            }
+            last_offset = 0;
+        }
+        while (last_offset < offset) {
+            process_char(dma_buffer[last_offset++]);
+        }
+    }
+}
+
 
 /* USER CODE END 0 */
 
@@ -151,119 +178,18 @@ int main(void)
   MX_USART3_UART_Init();
   /* USER CODE BEGIN 2 */
 
+    HAL_GPIO_WritePin(SYNCH_DA_GPIO_Port, SYNCH_DA_Pin, GPIO_PIN_SET);  // Enables D[1..4] inputs directly to outputs on MAX14906
+    HAL_UARTEx_ReceiveToIdle_DMA(uart, dma_buffer, sizeof(dma_buffer));    // Start receiving commands from CM4
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-
     while (1) {
-        if (cmd_received) {
-            command_t cmd = command_parse(cmd_buffer, MAX_COMMAND_LENGTH - 1);
-            switch (cmd) {
-                case NONE:
-                    break;
-                case HELP:
-                    break;
-                case DA1_ON:
-                    HAL_GPIO_WritePin(DA1_OUT_GPIO_Port, DA1_OUT_Pin, 1);
-                    break;
-                case DA2_ON:
-                    HAL_GPIO_WritePin(DA2_OUT_GPIO_Port, DA2_OUT_Pin, 1);
-                    break;
-                case DA3_ON:
-                    HAL_GPIO_WritePin(DA3_OUT_GPIO_Port, DA3_OUT_Pin, 1);
-                    break;
-                case DA1_OFF:
-                    HAL_GPIO_WritePin(DA1_OUT_GPIO_Port, DA1_OUT_Pin, 0);
-                    break;
-                case DA2_OFF:
-                    HAL_GPIO_WritePin(DA2_OUT_GPIO_Port, DA2_OUT_Pin, 0);
-                    break;
-                case DA3_OFF:
-                    HAL_GPIO_WritePin(DA3_OUT_GPIO_Port, DA3_OUT_Pin, 0);
-                    break;
-                case OUT1_ON:
-                    HAL_GPIO_WritePin(OUT1_GPIO_Port, OUT1_Pin, 1);
-                    break;
-                case OUT2_ON:
-                    HAL_GPIO_WritePin(OUT2_GPIO_Port, OUT2_Pin, 1);
-                    break;
-                case OUT3_ON:
-                    HAL_GPIO_WritePin(OUT3_GPIO_Port, OUT3_Pin, 1);
-                    break;
-                case OUT4_ON:
-                    HAL_GPIO_WritePin(OUT4_GPIO_Port, OUT4_Pin, 1);
-                    break;
-                case OUT1_OFF:
-                    HAL_GPIO_WritePin(OUT1_GPIO_Port, OUT1_Pin, 0);
-                    break;
-                case OUT2_OFF:
-                    HAL_GPIO_WritePin(OUT2_GPIO_Port, OUT2_Pin, 0);
-                    break;
-                case OUT3_OFF:
-                    HAL_GPIO_WritePin(OUT3_GPIO_Port, OUT3_Pin, 0);
-                    break;
-                case OUT4_OFF:
-                    HAL_GPIO_WritePin(OUT4_GPIO_Port, OUT4_Pin, 0);
-                    break;
-                case READ_DS1: {
-                    GPIO_PinState pin_state = HAL_GPIO_ReadPin(DS1_IN_GPIO_Port, DS1_IN_Pin);
-                    if (pin_state == GPIO_PIN_SET)
-                        respond("1");
-                    else
-                        respond("0");
-                }
-                break;
-                case READ_DS2: {
-                    GPIO_PinState pin_state = HAL_GPIO_ReadPin(DS2_IN_GPIO_Port, DS2_IN_Pin);
-                    if (pin_state == GPIO_PIN_SET)
-                        respond("1");
-                    else
-                        respond("0");
-                    break;
-                }
-                case READ_DS3: {
-                    GPIO_PinState pin_state = HAL_GPIO_ReadPin(DS3_IN_GPIO_Port, DS3_IN_Pin);
-                    if (pin_state == GPIO_PIN_SET)
-                        respond("1");
-                    else
-                        respond("0");
-                    break;
-                }
-                case READ_HU: {
-                    GPIO_PinState pin_state = HAL_GPIO_ReadPin(HU_IN_GPIO_Port, HU_IN_Pin);
-                    if (pin_state == GPIO_PIN_SET)
-                        respond("1");
-                    else
-                        respond("0");
-                    break;
-                }
-                case READ_HV: {
-                    GPIO_PinState pin_state = HAL_GPIO_ReadPin(HV_IN_GPIO_Port, HV_IN_Pin);
-                    if (pin_state == GPIO_PIN_SET)
-                        respond("1");
-                    else
-                        respond("0");
-                    break;
-                }
-                case READ_HW: {
-                    GPIO_PinState pin_state = HAL_GPIO_ReadPin(HW_IN_GPIO_Port, HW_IN_Pin);
-                    if (pin_state == GPIO_PIN_SET)
-                        respond("1");
-                    else
-                        respond("0");
-                    break;
-                }
-                case READ_HU_COUNT:
-                    respond_long(hu_counter);
-                case READ_HV_COUNT:
-                    respond_long(hv_counter);
-                    break;
-                case READ_HW_COUNT:
-                    respond_long(hw_counter);
-                    break;
-                default: ;
-            }
+        if (request_received) {
+            cmd_execute(request_buffer, response_buffer);
+            HAL_UART_Transmit_DMA(uart, response_buffer, strlen(response_buffer));
+            request_received = false;
         }
     /* USER CODE END WHILE */
 
@@ -402,7 +328,7 @@ static void MX_SPI2_Init(void)
   hspi2.Init.CLKPolarity = SPI_POLARITY_LOW;
   hspi2.Init.CLKPhase = SPI_PHASE_1EDGE;
   hspi2.Init.NSS = SPI_NSS_SOFT;
-  hspi2.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_2;
+  hspi2.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_256;
   hspi2.Init.FirstBit = SPI_FIRSTBIT_MSB;
   hspi2.Init.TIMode = SPI_TIMODE_DISABLE;
   hspi2.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
@@ -552,9 +478,18 @@ static void MX_DMA_Init(void)
   __HAL_RCC_DMA1_CLK_ENABLE();
 
   /* DMA interrupt init */
+  /* DMA1_Channel2_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Channel2_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Channel2_IRQn);
+  /* DMA1_Channel3_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Channel3_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Channel3_IRQn);
   /* DMA1_Channel4_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(DMA1_Channel4_IRQn, 0, 0);
   HAL_NVIC_EnableIRQ(DMA1_Channel4_IRQn);
+  /* DMA1_Channel5_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Channel5_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Channel5_IRQn);
 
 }
 
