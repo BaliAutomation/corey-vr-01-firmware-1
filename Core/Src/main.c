@@ -58,6 +58,9 @@ DMA_HandleTypeDef hdma_usart3_tx;
 DMA_HandleTypeDef hdma_usart3_rx;
 
 /* USER CODE BEGIN PV */
+uint8_t tx[16];
+uint8_t rx[16];
+HAL_StatusTypeDef status;
 
 uint64_t hu_counter;
 uint64_t hv_counter;
@@ -178,8 +181,19 @@ int main(void)
   MX_USART3_UART_Init();
   /* USER CODE BEGIN 2 */
 
-    HAL_GPIO_WritePin(SYNCH_DA_GPIO_Port, SYNCH_DA_Pin, GPIO_PIN_SET);  // Enables D[1..4] inputs directly to outputs on MAX14906
-    HAL_UARTEx_ReceiveToIdle_DMA(uart, dma_buffer, sizeof(dma_buffer));    // Start receiving commands from CM4
+    HAL_GPIO_WritePin(DA1_OUT_GPIO_Port, DA1_OUT_Pin, GPIO_PIN_SET); // DA1=ON
+    HAL_GPIO_WritePin(DA1_OUT_GPIO_Port, DA1_OUT_Pin, GPIO_PIN_RESET); // DA2=OFF
+    HAL_GPIO_WritePin(DA1_OUT_GPIO_Port, DA1_OUT_Pin, GPIO_PIN_SET); // DA3=ON
+
+    HAL_GPIO_WritePin(SPICS1_GPIO_Port, SPICS1_Pin, GPIO_PIN_SET); // deselect CS1
+    HAL_GPIO_WritePin(SPICS2_GPIO_Port, SPICS2_Pin, GPIO_PIN_SET); // deselect CS2
+    // tx[0] = (0x0A << 1) | 1;
+    // tx[1] = 0x50;
+    // HAL_SPI_TransmitReceive(&hspi2, tx, rx, 2, 10);
+
+    HAL_GPIO_WritePin(SYNCH_DA_GPIO_Port, SYNCH_DA_Pin, GPIO_PIN_SET);
+    // Enables D[1..4] inputs directly to outputs on MAX14906
+    HAL_UARTEx_ReceiveToIdle_DMA(uart, dma_buffer, sizeof(dma_buffer)); // Start receiving commands from CM4
 
   /* USER CODE END 2 */
 
@@ -194,6 +208,8 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+        HAL_GPIO_TogglePin(SV_STM_GPIO_Port, SV_STM_Pin);
+        HAL_Delay(200);
     }
   /* USER CODE END 3 */
 }
@@ -216,7 +232,7 @@ void SystemClock_Config(void)
   RCC_OscInitStruct.HSIState = RCC_HSI_ON;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
   RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
-  RCC_OscInitStruct.PLL.PLLMUL = RCC_PLL_MUL9;
+  RCC_OscInitStruct.PLL.PLLMUL = RCC_PLL_MUL2;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
   {
     Error_Handler();
@@ -231,7 +247,7 @@ void SystemClock_Config(void)
   RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV2;
   RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
 
-  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_2) != HAL_OK)
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_0) != HAL_OK)
   {
     Error_Handler();
   }
@@ -328,7 +344,7 @@ static void MX_SPI2_Init(void)
   hspi2.Init.CLKPolarity = SPI_POLARITY_LOW;
   hspi2.Init.CLKPhase = SPI_PHASE_1EDGE;
   hspi2.Init.NSS = SPI_NSS_SOFT;
-  hspi2.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_256;
+  hspi2.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_8;
   hspi2.Init.FirstBit = SPI_FIRSTBIT_MSB;
   hspi2.Init.TIMode = SPI_TIMODE_DISABLE;
   hspi2.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
@@ -501,8 +517,8 @@ static void MX_DMA_Init(void)
 static void MX_GPIO_Init(void)
 {
   GPIO_InitTypeDef GPIO_InitStruct = {0};
-/* USER CODE BEGIN MX_GPIO_Init_1 */
-/* USER CODE END MX_GPIO_Init_1 */
+  /* USER CODE BEGIN MX_GPIO_Init_1 */
+  /* USER CODE END MX_GPIO_Init_1 */
 
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOC_CLK_ENABLE();
@@ -591,8 +607,8 @@ static void MX_GPIO_Init(void)
   HAL_NVIC_SetPriority(EXTI4_IRQn, 5, 0);
   HAL_NVIC_EnableIRQ(EXTI4_IRQn);
 
-/* USER CODE BEGIN MX_GPIO_Init_2 */
-/* USER CODE END MX_GPIO_Init_2 */
+  /* USER CODE BEGIN MX_GPIO_Init_2 */
+  /* USER CODE END MX_GPIO_Init_2 */
 }
 
 /* USER CODE BEGIN 4 */
@@ -612,8 +628,7 @@ void Error_Handler(void)
     }
   /* USER CODE END Error_Handler_Debug */
 }
-
-#ifdef  USE_FULL_ASSERT
+#ifdef USE_FULL_ASSERT
 /**
   * @brief  Reports the name of the source file and the source line number
   *         where the assert_param error has occurred.

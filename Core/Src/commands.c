@@ -128,11 +128,13 @@ uint8_t spi_read(uint8_t reg) {
     memset(spi_tx_buff, 0, 16);
     spi_tx_buff[0] = reg << 1;
 
-    status = HAL_SPI_TransmitReceive(spi, spi_tx_buff, spi_rx_buff, 2, 100);
+    status = HAL_SPI_TransmitReceive(spi, spi_tx_buff, spi_rx_buff, 2, 10);
+    // status = HAL_SPI_Transmit(spi, spi_tx_buff, 1, 5);
+    // status |= HAL_SPI_Receive(spi, spi_rx_buff, 1, 5);
     if (status != HAL_OK) {
         return 0xAA;
     }
-    return spi_rx_buff[1];
+    return spi_rx_buff[0];
 }
 
 void spi_write(uint8_t reg, uint8_t value) {
